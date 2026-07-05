@@ -2,6 +2,11 @@
 
 > **An AI-powered code understanding platform that goes beyond traditional RAG using ASTs, Knowledge Graphs, and Repository Intelligence.**
 
+![Status](https://img.shields.io/badge/status-active_development-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![Node.js](https://img.shields.io/badge/Node.js-22+-green)
+
 ---
 
 ## 🌟 Vision
@@ -15,6 +20,19 @@ Instead of treating source code as plain text, Arka understands a repository's *
 Our mission is to build an AI software engineering assistant that truly understands codebases—not just documents.
 
 ---
+
+# ✅ Current Capabilities
+
+Arka is currently capable of:
+
+- ✅ Clone GitHub repositories
+- ✅ Scan repositories recursively
+- ✅ Detect programming languages
+- ✅ Parse JavaScript, TypeScript and Python source files
+- ✅ Generate Abstract Syntax Trees (AST) using the official Tree-sitter parser
+- ✅ Expose parsing functionality through a FastAPI service
+
+> **Current Stage:** Repository Parsing Infrastructure
 
 ## ❌ The Problem
 
@@ -40,76 +58,100 @@ This frequently leads to incomplete or hallucinated answers.
 Arka combines multiple layers of repository understanding:
 
 ```text
-GitHub Repository
-        │
-        ▼
-Repository Ingestion
-        │
-        ▼
-Tree-sitter Parser
-        │
-        ▼
-Abstract Syntax Tree (AST)
-        │
-        ▼
-Knowledge Extraction
-        │
-        ▼
-Knowledge Graph
-        │
-        ▼
-Embeddings
-        │
-        ▼
-Vector Database
-        │
-        ▼
-Retrieval Engine
-        │
-        ▼
-Large Language Model
-        │
-        ▼
-Developer Answer
+                        GitHub Repository
+                                │
+                                ▼
+                      Repository Service
+                                │
+                                ▼
+                        Clone Repository
+                                │
+                                ▼
+                      Repository Scanner
+                                │
+                                ▼
+                     Language Detection
+                                │
+                                ▼
+                         Parser Factory
+                                │
+          ┌─────────────────────┼──────────────────────┐
+          ▼                     ▼                      ▼
+ JavaScript Parser      TypeScript Parser      Python Parser
+          │                     │                      │
+          └─────────────────────┼──────────────────────┘
+                                ▼
+                     Tree-sitter Abstract Syntax Tree
+                                │
+                                ▼
+                     Symbol Extraction (Upcoming)
+                                │
+                                ▼
+                       Knowledge Graph (Upcoming)
+                                │
+                                ▼
+                        Hybrid Retrieval (Upcoming)
+                                │
+                                ▼
+                             Large Language Model
 ```
 
 Instead of retrieving random code chunks, Arka retrieves **repository knowledge**.
 
 ---
 
-# ✨ Features (Planned)
+# ✨ Features
 
-- 📦 GitHub Repository Ingestion
-- 🌳 AST Generation using Tree-sitter
-- 🧠 Repository Knowledge Graph
-- 🔍 Semantic Code Search
-- 💬 AI Chat with Repository Context
-- 🏗️ Architecture Understanding
-- 🔗 Function Dependency Analysis
-- 📄 Code Summarization
-- 🧪 Multi-language Support
-- 📊 Repository Visualization
+## ✅ Implemented
+
+- GitHub Repository Cloning
+- Repository Scanner
+- Language Detection
+- Parser Factory
+- Official Tree-sitter Integration
+- AST Generation
+- FastAPI Parsing API
 
 ---
 
-# 🏗️ Project Structure
+## 🚧 Upcoming
+
+- Symbol Extraction
+- Dependency Analysis
+- Knowledge Graph
+- Vector Search
+- Repository Chat
+- Hybrid Retrieval
+- GraphRAG
+
+# 📂 Current Project Structure
 
 ```text
 arka/
 │
-├── frontend/          # Next.js application
+├── frontend/
 │
-├── backend/           # Express API
+├── backend/
+│   ├── src/
+│   │   ├── controllers/
+│   │   ├── routes/
+│   │   ├── services/
+│   │   └── ...
 │
-├── ai-service/        # FastAPI AI engine
-│
-├── docker/
+├── ai-service/
+│   ├── analysis/
+│   │   ├── scanner.py
+│   │   ├── language_detector.py
+│   │   ├── parser_factory.py
+│   │   └── parsers/
+│   │
+│   ├── api/
+│   ├── schemas/
+│   └── app.py
 │
 ├── docs/
 │
-├── docker-compose.yml
-│
-└── README.md
+└── docker/
 ```
 
 ---
@@ -153,36 +195,39 @@ arka/
 
 ## Phase 3 — Code Parsing
 
-- [ ] Tree-sitter integration
-- [ ] AST generation
-- [ ] Multi-language parsing
-- [ ] Parser API
+- [x] Repository Scanner
+- [x] Language Detection
+- [x] Parser Factory
+- [x] Official Tree-sitter Integration
+- [x] AST Generation
+- [x] FastAPI Parser API
 
 ---
 
-## Phase 4 — Knowledge Extraction
+## Phase 4 — Symbol Extraction
 
-- [ ] Function extraction
-- [ ] Class extraction
-- [ ] Imports
-- [ ] Exports
-- [ ] Dependency graph
+- [ ] Function Extraction
+- [ ] Class Extraction
+- [ ] Method Extraction
+- [ ] Import Extraction
+- [ ] Export Extraction
+- [ ] Variable Extraction
 
 ---
 
-## Phase 5 — Embeddings
+## Phase 5 — Repository Index
 
-- [ ] Code chunk generation
-- [ ] Embedding pipeline
-- [ ] Qdrant integration
+- [ ] Repository Symbol Table
+- [ ] File Metadata
+- [ ] Cross-file References
 
 ---
 
 ## Phase 6 — Knowledge Graph
 
-- [ ] Neo4j integration
-- [ ] Relationship generation
-- [ ] Graph traversal
+- [ ] Neo4j Integration
+- [ ] Dependency Graph
+- [ ] Call Graph
 
 ---
 
