@@ -138,7 +138,7 @@ instead of simply retrieving text.
 
 # ✅ Current Capabilities
 
-As of **Day 3**, Arka can:
+As of the latest release, Arka can:
 
 - ✅ Clone GitHub repositories
 - ✅ Scan repositories recursively
@@ -147,6 +147,9 @@ As of **Day 3**, Arka can:
 - ✅ Parse TypeScript repositories
 - ✅ Parse Python repositories
 - ✅ Generate Abstract Syntax Trees using the official Tree-sitter parser
+- ✅ Extract functions and classes using Tree-sitter `Query` and `QueryCursor`
+- ✅ Build a repository symbol index with `RepositoryParser`
+- ✅ Extend language support via query plugins in `queries/<language>.py`
 - ✅ Expose parsing functionality through FastAPI
 - ✅ Modular parser architecture using the Factory Pattern
 
@@ -173,7 +176,13 @@ Parser Factory ✅
 Tree-sitter AST ✅
 │
 ▼
-Symbol Extraction ⏳
+Tree-sitter Query + QueryCursor ✅
+│
+▼
+FunctionExtractor / ClassExtractor ✅
+│
+▼
+Repository Index ✅
 │
 ▼
 Knowledge Graph ⏳
@@ -186,9 +195,9 @@ Repository Chat ⏳
 
 ```
 
-Arka has completed its repository ingestion and parsing infrastructure.
+Arka has completed its repository ingestion, parsing, and symbol extraction infrastructure.
 
-The next milestone is building repository knowledge from ASTs.
+The next milestone is building repository knowledge graphs and hybrid retrieval from the symbol index.
 
 ---
 
@@ -256,7 +265,15 @@ The complete pipeline looks like this:
                     Tree-sitter Abstract Syntax Tree
                                   │
                                   ▼
-                        Symbol Extraction (Upcoming)
+                    Tree-sitter Query + QueryCursor
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+           FunctionExtractor            ClassExtractor
+                    │                           │
+                    └─────────────┬─────────────┘
+                                  ▼
+                          Repository Index
                                   │
                                   ▼
                          Repository Knowledge
@@ -305,6 +322,14 @@ Every stage enriches the repository with more knowledge before an LLM is involve
 - Parser Factory pattern
 - AST generation
 
+### Symbol Extraction
+
+- Tree-sitter `Query` and `QueryCursor` API
+- `FunctionExtractor` and `ClassExtractor`
+- Language-specific query plugins (`queries/javascript.py`, `queries/typescript.py`, `queries/python.py`)
+- `RepositoryParser` pipeline for full-repository indexing
+- No manual AST walking — queries define all node patterns
+
 ### AI Service
 
 - FastAPI backend
@@ -318,18 +343,14 @@ Every stage enriches the repository with more knowledge before an LLM is involve
 
 ### Repository Intelligence
 
-- Function extraction
-- Class extraction
-- Interface extraction
-- Variable extraction
 - Import analysis
 - Export analysis
+- Interface extraction
+- Variable extraction
+- Cross-file reference resolution
 
 ### Repository Knowledge
 
-- Symbol Table
-- Repository Index
-- Cross-file References
 - Call Graph
 - Dependency Graph
 
@@ -377,6 +398,7 @@ arka/
 │   │      scanner.py
 │   │      language_detector.py
 │   │      parser_factory.py
+│   │      repository_parser.py
 │   │
 │   │      parsers/
 │   │      │
@@ -385,13 +407,22 @@ arka/
 │   │      ├── typescript_parser.py
 │   │      └── python_parser.py
 │   │
-│   │      extractors/
+│   │      queries/
+│   │      │
+│   │      ├── javascript.py
+│   │      ├── typescript.py
+│   │      ├── python.py
+│   │      └── registry.py
 │   │
-│   │      graph/
+│   │      extractors/
+│   │      │
+│   │      ├── base_extractor.py
+│   │      ├── function_extractor.py
+│   │      └── class_extractor.py
+│   │
+│   ├── tests/
 │   │
 │   ├── schemas/
-│   │
-│   ├── utils/
 │   │
 │   └── app.py
 │
@@ -429,6 +460,8 @@ arka/
 Traditional AI systems tokenize source code as text.
 
 Tree-sitter parses source code into an **Abstract Syntax Tree (AST)** that preserves the structure of the programming language.
+
+Arka uses the official **py-tree-sitter Query API** (`Query`, `QueryCursor`, `matches`, `captures`) to extract symbols from ASTs. Each language defines its own query patterns in `queries/<language>.py`, so adding a new language requires only a grammar package and a query plugin — no changes to extractors or `RepositoryParser`.
 
 Example:
 
@@ -532,15 +565,24 @@ The backend will eventually call this endpoint after cloning a repository.
 
 ---
 
-## 🚧 Phase 4 — Symbol Extraction
+## ✅ Phase 4 — Symbol Extraction
 
-- Function Extraction
-- Class Extraction
+- Function Extraction (Tree-sitter Query API)
+- Class Extraction (Tree-sitter Query API)
+- Language Query Plugins
 - Interface Extraction
 - Method Extraction
 - Variable Extraction
 - Import Extraction
 - Export Extraction
+
+---
+
+## ✅ Phase 5 — Repository Index
+
+- Repository Parser Pipeline
+- Per-file Function and Class Index
+- Cross-file References
 
 ---
 
@@ -612,6 +654,12 @@ Install dependencies
 
 ```bash
 pip install -r requirements.txt
+```
+
+Run tests
+
+```bash
+python -m pytest tests/ -v
 ```
 
 Run FastAPI

@@ -30,9 +30,12 @@ Arka is currently capable of:
 - ✅ Detect programming languages
 - ✅ Parse JavaScript, TypeScript and Python source files
 - ✅ Generate Abstract Syntax Trees (AST) using the official Tree-sitter parser
+- ✅ Extract functions and classes using Tree-sitter Query and QueryCursor
+- ✅ Build a repository symbol index via `RepositoryParser`
+- ✅ Language plugin architecture for adding new grammars via `queries/<language>.py`
 - ✅ Expose parsing functionality through a FastAPI service
 
-> **Current Stage:** Repository Parsing Infrastructure
+> **Current Stage:** Repository Symbol Extraction
 
 ## ❌ The Problem
 
@@ -84,7 +87,15 @@ Arka combines multiple layers of repository understanding:
                      Tree-sitter Abstract Syntax Tree
                                 │
                                 ▼
-                     Symbol Extraction (Upcoming)
+              Tree-sitter Query + QueryCursor
+                                │
+                ┌───────────────┴───────────────┐
+                ▼                               ▼
+        FunctionExtractor               ClassExtractor
+                │                               │
+                └───────────────┬───────────────┘
+                                ▼
+                       Repository Index
                                 │
                                 ▼
                        Knowledge Graph (Upcoming)
@@ -110,13 +121,17 @@ Instead of retrieving random code chunks, Arka retrieves **repository knowledge*
 - Parser Factory
 - Official Tree-sitter Integration
 - AST Generation
+- Tree-sitter Query-based Symbol Extraction
+- Function and Class Extraction
+- Repository Parser and Symbol Index
+- Language Query Plugins (JavaScript, TypeScript, Python)
 - FastAPI Parsing API
 
 ---
 
 ## 🚧 Upcoming
 
-- Symbol Extraction
+- Import and Export Extraction
 - Dependency Analysis
 - Knowledge Graph
 - Vector Search
@@ -143,10 +158,21 @@ arka/
 │   │   ├── scanner.py
 │   │   ├── language_detector.py
 │   │   ├── parser_factory.py
-│   │   └── parsers/
+│   │   ├── repository_parser.py
+│   │   ├── parsers/
+│   │   ├── queries/
+│   │   │   ├── javascript.py
+│   │   │   ├── typescript.py
+│   │   │   ├── python.py
+│   │   │   └── registry.py
+│   │   └── extractors/
+│   │       ├── base_extractor.py
+│   │       ├── function_extractor.py
+│   │       └── class_extractor.py
 │   │
 │   ├── api/
 │   ├── schemas/
+│   ├── tests/
 │   └── app.py
 │
 ├── docs/
@@ -206,8 +232,9 @@ arka/
 
 ## Phase 4 — Symbol Extraction
 
-- [ ] Function Extraction
-- [ ] Class Extraction
+- [x] Function Extraction (Tree-sitter Query API)
+- [x] Class Extraction (Tree-sitter Query API)
+- [x] Language Query Plugins
 - [ ] Method Extraction
 - [ ] Import Extraction
 - [ ] Export Extraction
@@ -217,7 +244,8 @@ arka/
 
 ## Phase 5 — Repository Index
 
-- [ ] Repository Symbol Table
+- [x] Repository Parser Pipeline
+- [x] Per-file Function and Class Index
 - [ ] File Metadata
 - [ ] Cross-file References
 
@@ -283,6 +311,9 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
+
+# Run tests
+python -m pytest tests/ -v
 
 uvicorn app:app --reload
 ```
