@@ -6,9 +6,13 @@ from .base_parser import BaseParser
 
 class PythonParser(BaseParser):
 
-    def __init__(self):
-        language = Language(tree_sitter_python.language())
-        self.parser = Parser(language)
+    def __init__(self) -> None:
+        self._language = Language(tree_sitter_python.language())
+        self.parser = Parser(self._language)
+
+    @property
+    def language(self) -> Language:
+        return self._language
 
     def parse(self, source: str):
         return self.parser.parse(source.encode("utf8"))
