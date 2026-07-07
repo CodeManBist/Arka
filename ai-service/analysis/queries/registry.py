@@ -48,3 +48,15 @@ def get_function_query(language: str) -> str:
 def get_class_query(language: str) -> str:
     """Return the class extraction query for a language."""
     return _load_query_module(language).CLASS_QUERY
+
+def get_import_query(language: str) -> str:
+    """Return the import extraction query for a language."""
+    return _load_query_module(language).IMPORT_QUERY
+
+def get_export_query(language: str) -> str:
+    """Return the export extraction query for a language."""
+    return _load_query_module(language).EXPORT_QUERY
+
+def get_variable_query(language: str) -> str:
+    """Return the variable extraction query for a language."""
+    return _load_query_module(language).VARIABLE_QUERY
