@@ -12,6 +12,7 @@ from analysis.parser_factory import ParserFactory
 from analysis.scanner import RepositoryScanner
 from analysis.extractors.export_extractor import ExportExtractor
 from analysis.extractors.variable_extractor import VariableExtractor
+from analysis.builders.symbol_table_builder import SymbolTableBuilder
 class RepositoryParser:
     """Orchestrate repository scanning, parsing, and symbol extraction."""
 
@@ -22,6 +23,7 @@ class RepositoryParser:
         self.function_extractor = FunctionExtractor()
         self.class_extractor = ClassExtractor()
         self.import_extractor = ImportExtractor()
+        self.symbol_table_builder = SymbolTableBuilder()
 
     def parse_repository(self, repository_path: str) -> dict[str, Any]:
         """
@@ -107,4 +109,9 @@ class RepositoryParser:
                 }
             )
 
-        return repository
+        symbol_table = self.symbol_table_builder.build(repository)
+
+        return {
+            "repository": repository,
+            "symbol_table": symbol_table,
+        }
