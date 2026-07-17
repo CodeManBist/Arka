@@ -27,6 +27,6 @@ EXPORT_QUERY = """
 """
 
 VARIABLE_QUERY = """
-(variable_definition
-  name: (identifier) @variable.name) @variable.def
+(assignment
+  left: (identifier) @variable.name) @variable.def
 """

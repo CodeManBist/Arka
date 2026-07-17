@@ -27,7 +27,7 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString(),
     endpoints: {
       health: '/',
-      proxy: '/api/*',
+      proxy: '/api',
     }
   });
 });
@@ -61,7 +61,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // Proxy middleware for AI service
 // This proxies all /api/* requests to the AI service
-app.use('/api/*', createProxyMiddleware({
+app.use('/api', createProxyMiddleware({
   target: AI_SERVICE_URL,
   changeOrigin: true,
   pathRewrite: {

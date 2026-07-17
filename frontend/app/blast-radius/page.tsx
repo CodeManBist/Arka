@@ -736,8 +736,6 @@ const PRComment = ({
   );
 };
 
-};
-
 // Main Component
 export default function BlastRadiusPage() {
   const router = useRouter();
