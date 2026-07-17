@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set
 import re
+from pathlib import Path
 
 from .graph import Graph
 from .node import Node, NodeType
@@ -72,15 +73,20 @@ class ImportGraphBuilder:
     
     def _create_import_edges(self, repository_data: dict[str, Any]) -> None:
         """Create edges for import relationships."""
-        # Build a mapping of import paths to file paths
-        import_path_to_file: Dict[str, str] = {}
-        
+        # Build a mapping of all files by their path and name
+        file_info: Dict[str, Dict[str, Any]] = {}
         for file_data in repository_data.get("files", []):
             file_path = file_data["path"]
-            for imp in file_data.get("imports", []):
-                import_path = imp.get("path", "")
-                if import_path:
-                    import_path_to_file[import_path] = file_path
+            file_name = Path(file_path).name
+            file_stem = Path(file_path).stem
+            
+            file_info[file_path] = {
+                "path": file_path,
+                "name": file_name,
+                "stem": file_stem,
+                "language": file_data["language"],
+                "exports": [e.get("name", "") for e in file_data.get("exports", [])],
+            }
         
         # Create edges based on imports
         for file_data in repository_data.get("files", []):
@@ -89,29 +95,18 @@ class ImportGraphBuilder:
             
             for imp in file_data.get("imports", []):
                 import_path = imp.get("path", "")
+                import_name = imp.get("name", "")
+                named_imports = imp.get("named_imports", [])
+                
                 if not import_path:
                     continue
                 
-                # Try to find the imported file
-                imported_file_path = import_path_to_file.get(import_path)
+                # Try to resolve the import path to a file
+                imported_file_path = self._resolve_import_path(
+                    import_path, file_path, file_info
+                )
                 
-                # Handle relative imports
-                if not imported_file_path and import_path.startswith("."):
-                    # Resolve relative import
-                    import_dir = Path(file_path).parent
-                    resolved_path = (import_dir / import_path).resolve()
-                    imported_file_path = str(resolved_path)
-                
-                # Handle absolute imports (try to find matching file)
-                if not imported_file_path:
-                    # Look for files that match the import path
-                    for other_file_data in repository_data.get("files", []):
-                        other_file_path = other_file_data["path"]
-                        if self._file_matches_import(other_file_path, import_path):
-                            imported_file_path = other_file_path
-                            break
-                
-                if imported_file_path:
+                if imported_file_path and imported_file_path in file_info:
                     imported_node_id = self._generate_file_node_id(imported_file_path)
                     
                     # Only create edge if both nodes exist
@@ -125,10 +120,109 @@ class ImportGraphBuilder:
                             metadata={
                                 "source_file": file_path,
                                 "target_file": imported_file_path,
-                                "import_path": import_path
+                                "import_path": import_path,
+                                "import_name": import_name,
+                                "named_imports": named_imports,
                             }
                         )
                         self.graph.add_edge(edge)
+    
+    def _resolve_import_path(
+        self,
+        import_path: str,
+        caller_file_path: str,
+        file_info: Dict[str, Dict[str, Any]]
+    ) -> Optional[str]:
+        """Resolve an import path to an actual file path."""
+        import_path = import_path.strip()
+        
+        # Remove quotes if present
+        if import_path.startswith('"') or import_path.startswith("'"):
+            import_path = import_path[1:-1]
+        
+        # Handle empty path
+        if not import_path:
+            return None
+        
+        # Case 1: Relative import (starts with .)
+        if import_path.startswith("."):
+            caller_dir = Path(caller_file_path).parent
+            
+            # Handle ./
+            if import_path.startswith("./"):
+                import_path = import_path[2:]
+            elif import_path.startswith("."):
+                import_path = import_path[1:]
+            
+            # Try to find the file
+            candidate_path = (caller_dir / import_path).resolve()
+            
+            # Try different extensions
+            for ext in ["", ".js", ".ts", ".jsx", ".tsx", ".py"]:
+                test_path = str(candidate_path) + ext
+                if test_path in file_info:
+                    return test_path
+                
+                # Also try with index files
+                test_index_path = str(Path(test_path).parent / "index" + ext)
+                if test_index_path in file_info:
+                    return test_index_path
+            
+            # Try without the first part of the path
+            parts = import_path.split("/")
+            for i in range(len(parts)):
+                partial_path = Path(*parts[i:])
+                for ext in ["", ".js", ".ts", ".jsx", ".tsx", ".py"]:
+                    test_path = str(caller_dir / partial_path) + ext
+                    if test_path in file_info:
+                        return test_path
+        
+        # Case 2: Absolute import (no leading ., no /)
+        elif "/" not in import_path and "\\" not in import_path:
+            # This is a module name, try to find matching files
+            import_stem = Path(import_path).stem
+            
+            # Look for files with matching name
+            for file_path, info in file_info.items():
+                file_stem = info["stem"]
+                
+                # Direct match
+                if file_stem == import_stem or file_stem == import_path:
+                    return file_path
+                
+                # Match with extension
+                if Path(file_path).name == import_path:
+                    return file_path
+                
+                # Check if this file exports the imported name
+                if import_path in info.get("exports", []):
+                    return file_path
+            
+            # Try to find index files
+            for ext in [".js", ".ts", ".jsx", ".tsx", ".py"]:
+                index_path = f"{import_path}/index{ext}"
+                if index_path in file_info:
+                    return index_path
+                
+                # Also try without leading /
+                index_path = f"{import_path.replace('/', Path.sep)}index{ext}"
+                if index_path in file_info:
+                    return index_path
+        
+        # Case 3: Path import (starts with / or contains /)
+        else:
+            # Try to find the file directly
+            for file_path in file_info:
+                if import_path in file_path or file_path.endswith(import_path):
+                    return file_path
+            
+            # Try with extensions
+            for ext in [".js", ".ts", ".jsx", ".tsx", ".py"]:
+                test_path = import_path + ext
+                if test_path in file_info:
+                    return test_path
+        
+        return None
     
     def _file_matches_import(self, file_path: str, import_path: str) -> bool:
         """Check if a file path matches an import path."""
@@ -147,6 +241,12 @@ class ImportGraphBuilder:
         
         # Handle index files
         if Path(file_path).name == "index.py" and import_path.endswith("/index"):
+            return True
+        
+        if Path(file_path).name == "index.js" and import_path.endswith("/index"):
+            return True
+        
+        if Path(file_path).name == "index.ts" and import_path.endswith("/index"):
             return True
         
         return False
@@ -174,7 +274,3 @@ class ImportGraphBuilder:
         # Normalize path for use in ID
         normalized_path = file_path.replace("/", "_").replace("\\", "_")
         return f"file:{normalized_path}"
-
-
-# Import Path for compatibility
-from pathlib import Path

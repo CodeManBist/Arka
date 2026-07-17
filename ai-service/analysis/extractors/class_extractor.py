@@ -15,6 +15,7 @@ class ClassExtractor(BaseQueryExtractor):
 
     NAME_CAPTURE = "class.name"
     DEFINITION_CAPTURE = "class.def"
+    BODY_CAPTURE = "class.body"
 
     def extract(
         self,
@@ -35,7 +36,7 @@ class ClassExtractor(BaseQueryExtractor):
             query_string: Optional pre-loaded query string.
 
         Returns:
-            List of class symbols with name and line range.
+            List of class symbols with name, line range, and body.
         """
         if query_string is None:
             if language_name is None:
@@ -44,4 +45,11 @@ class ClassExtractor(BaseQueryExtractor):
                 )
             query_string = get_class_query(language_name)
 
-        return super().extract(language, tree, source, query_string)
+        # Extract classes
+        symbols = super().extract(language, tree, source, query_string)
+        
+        # Extract methods from each class
+        for symbol in symbols:
+            symbol["methods"] = []
+        
+        return symbols

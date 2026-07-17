@@ -2,12 +2,14 @@
 
 FUNCTION_QUERY = """
 (function_definition
-  name: (identifier) @function.name) @function.def
+  name: (identifier) @function.name
+  body: (block) @function.body) @function.def
 """
 
 CLASS_QUERY = """
 (class_definition
-  name: (identifier) @class.name) @class.def
+  name: (identifier) @class.name
+  body: (block) @class.body) @class.def
 """
 
 IMPORT_QUERY = """
@@ -16,6 +18,10 @@ IMPORT_QUERY = """
 
 (import_from_statement
   module_name: (dotted_name) @import.module) @import.def
+
+(import_from_statement
+  name: (import_list
+    name: (identifier) @import.named)) @import.def
 """
 
 EXPORT_QUERY = """
