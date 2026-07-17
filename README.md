@@ -318,7 +318,7 @@ pip install -r requirements.txt
 npm install -g tree-sitter-cli
 
 # Install language parsers
-tree-sitter install python javascript typescript
+pip install tree-sitter-python tree-sitter-javascript tree-sitter-typescript
 
 # Start the service
 uvicorn app:app --reload
