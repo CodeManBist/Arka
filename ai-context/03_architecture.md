@@ -1,45 +1,71 @@
 Frontend
+Next.js (React + TypeScript + Tailwind CSS)
 
-↓
 
-Express
+ Express (Node.js Backend)
 
-↓
 
-FastAPI
+ FastAPI (AI Service)
 
-↓
 
-Repository Scanner
+ Repository Scanner
 
-↓
 
-Parser
+ Parser Factory
 
-↓
 
-AST
+ AST (Tree-sitter)
 
-↓
 
-Extractors
+ Extractors (Functions, Classes, Imports, Exports, Variables, References)
 
-↓
 
-Graph
+ Symbol Table Builder
 
-↓
 
-Traversal
+ Graph Builders (Call Graph, Import Graph)
 
-↓
 
-Risk Engine
+ Impact Traversal Engine (BFS/DFS with Risk Scoring)
 
-↓
 
-Codex
+ Diff Parser (Git diff analysis)
 
-↓
 
-Frontend
+ Risk Engine (Fan-out, Criticality, Test Coverage)
+
+
+ Blast Radius API Endpoints
+
+
+ Codex (AI Summaries - planned)
+
+
+Frontend (Visualization, Dashboards, PR Comments)
+
+Detailed Flow:
+
+1. User submits repository URL
+    Repository Scanner clones and scans
+    Parser Factory creates appropriate parser
+    Tree-sitter generates AST
+    Extractors pull out symbols
+    Symbol Table Builder indexes everything
+    Graph Builders create call and import graphs
+
+2. User pastes git diff or selects symbol
+    Diff Parser extracts changed symbols
+    Impact Traversal Engine walks the graph
+    Risk Engine calculates scores
+    API returns structured impact analysis
+
+3. Frontend displays results
+    Repository Overview Dashboard
+    Impact Analysis with risk cards
+    Interactive Graph Visualization
+    PR Comment Generation
+
+Service Boundaries:
+- Frontend: UI, user interaction, visualization
+- Backend: API gateway, request routing
+- AI Service: Core analysis, graph building, traversal

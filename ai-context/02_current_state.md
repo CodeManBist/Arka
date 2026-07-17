@@ -22,27 +22,49 @@ Language plugins
 
 FastAPI
 
-Remaining
-
 Method extraction
 
 Import extraction
 
 Export extraction
 
-Call graph
+Variable extraction
 
-Import graph
+Reference extraction
 
-Impact traversal
+Symbol table builder
+
+Call graph builder
+
+Import graph builder
+
+Impact traversal engine
 
 Risk engine
 
 Diff parser
 
-Visualization
+Blast Radius API endpoints
 
-Codex integration
+Frontend UI (Repository Overview, Symbol Analysis, Diff Analysis, Visualization)
+
+PR comment generator
+
+Remaining
+
+Codex integration (for AI summaries)
+
+Interactive graph visualization (D3.js or similar)
+
+Neo4j persistence for larger repos
+
+Test coverage overlay
+
+CI integration
+
+IDE extension
+
+Live GitHub PR integration
 
 Do NOT rewrite completed modules.
 
