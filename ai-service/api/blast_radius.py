@@ -1,54 +1,117 @@
 """API endpoints for Blast Radius impact analysis."""
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi.responses import JSONResponse
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+import logging
 
 from analysis.repository_parser import RepositoryParser
 from analysis.diff_parser import DiffParser
 from graph.call_graph_builder import CallGraphBuilder
 from graph.import_graph_builder import ImportGraphBuilder
 from graph.impact_traversal import ImpactTraversalEngine, ImpactResult
+from analysis.repository_manager import (
+    InvalidRepositoryError,
+    CloneError,
+    get_repository_manager,
+)
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/blast-radius", tags=["blast-radius"])
 
 
 class BlastRadiusRequest(BaseModel):
     """Request model for blast radius analysis."""
-    repository_path: str
-    symbol_name: str
-    symbol_type: str = "function"
-    file_path: Optional[str] = None
-    max_depth: int = 3
+    repository_path: str = Field(..., description="Local path or GitHub URL of the repository")
+    symbol_name: str = Field(..., description="Name of the symbol to analyze")
+    symbol_type: str = Field(default="function", description="Type of symbol (function, class, method, etc.)")
+    file_path: Optional[str] = Field(default=None, description="Optional file path to narrow down the symbol")
+    max_depth: int = Field(default=3, ge=1, le=10, description="Maximum depth for transitive traversal")
 
 
 class DiffAnalysisRequest(BaseModel):
     """Request model for diff-based analysis."""
-    repository_path: str
-    diff: str
-    max_depth: int = 3
+    repository_path: str = Field(..., description="Local path or GitHub URL of the repository")
+    diff: str = Field(..., description="Git diff string to analyze")
+    max_depth: int = Field(default=3, ge=1, le=10, description="Maximum depth for transitive traversal")
 
 
 class RepositoryOverviewRequest(BaseModel):
     """Request model for repository overview."""
-    repository_path: str
+    repository_path: str = Field(..., description="Local path or GitHub URL of the repository")
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response model."""
+    success: bool = False
+    error: str
+    error_type: str
+    details: Optional[Dict[str, Any]] = None
+
+
+def create_error_response(
+    error: Exception, 
+    error_type: str = "unknown_error",
+    status_code: int = 500
+) -> JSONResponse:
+    """Create a standardized error response."""
+    error_message = str(error)
+    
+    # Log the error
+    logger.error(f"{error_type}: {error_message}")
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": False,
+            "error": error_message,
+            "error_type": error_type,
+            "details": {
+                "type": type(error).__name__,
+            }
+        }
+    )
 
 
 @router.post("/analyze")
-async def analyze_impact(request: BlastRadiusRequest) -> Dict[str, Any]:
+async def analyze_impact(
+    request: BlastRadiusRequest,
+    background_tasks: BackgroundTasks = None
+) -> Dict[str, Any]:
     """
     Analyze the impact of changing a specific symbol.
     
     This endpoint:
-    1. Parses the repository
-    2. Builds call and import graphs
-    3. Traverses the graph to find affected code
-    4. Returns impact analysis with risk scoring
+    1. Resolves the repository input (local path or GitHub URL)
+    2. Parses the repository
+    3. Builds call and import graphs
+    4. Traverses the graph to find affected code
+    5. Returns impact analysis with risk scoring
+    
+    Note: For GitHub URLs, the repository is cloned to a temporary directory
+    and automatically cleaned up after analysis.
     """
     try:
         # Parse the repository
         parser = RepositoryParser()
-        repository_data = parser.parse_repository(request.repository_path)
+        
+        try:
+            repository_data = parser.parse_repository_with_cleanup(request.repository_path)
+        except InvalidRepositoryError as e:
+            return create_error_response(
+                e, 
+                error_type="invalid_repository",
+                status_code=400
+            )
+        except CloneError as e:
+            return create_error_response(
+                e,
+                error_type="clone_error",
+                status_code=400
+            )
         
         # Build graphs
         call_graph_builder = CallGraphBuilder()
@@ -72,22 +135,49 @@ async def analyze_impact(request: BlastRadiusRequest) -> Dict[str, Any]:
             "repository_stats": call_graph.get_statistics()
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return create_error_response(e, error_type="analysis_error")
 
 
 @router.post("/analyze-diff")
-async def analyze_diff_impact(request: DiffAnalysisRequest) -> Dict[str, Any]:
+async def analyze_diff_impact(
+    request: DiffAnalysisRequest,
+    background_tasks: BackgroundTasks = None
+) -> Dict[str, Any]:
     """
     Analyze the impact of a git diff.
     
     This is the killer feature: paste a git diff and get automatic
     impact analysis for all changed symbols.
+    
+    The endpoint:
+    1. Resolves the repository input
+    2. Parses the repository
+    3. Builds call and import graphs
+    4. Parses the diff to detect changed symbols
+    5. Analyzes impact for each changed symbol
+    6. Returns aggregated results
     """
     try:
         # Parse the repository
         parser = RepositoryParser()
-        repository_data = parser.parse_repository(request.repository_path)
+        
+        try:
+            repository_data = parser.parse_repository_with_cleanup(request.repository_path)
+        except InvalidRepositoryError as e:
+            return create_error_response(
+                e,
+                error_type="invalid_repository",
+                status_code=400
+            )
+        except CloneError as e:
+            return create_error_response(
+                e,
+                error_type="clone_error",
+                status_code=400
+            )
         
         # Build graphs
         call_graph_builder = CallGraphBuilder()
@@ -99,6 +189,22 @@ async def analyze_diff_impact(request: DiffAnalysisRequest) -> Dict[str, Any]:
         # Parse the diff
         diff_parser = DiffParser()
         changed_symbols = diff_parser.parse_diff(request.diff)
+        
+        if not changed_symbols:
+            return {
+                "success": True,
+                "results": [],
+                "summary": {
+                    "total_changed_symbols": 0,
+                    "total_callers": 0,
+                    "total_files": 0,
+                    "overall_risk": "low",
+                    "average_confidence": 1.0,
+                    "changed_symbols": []
+                },
+                "repository_stats": call_graph.get_statistics(),
+                "message": "No changed symbols detected in the diff"
+            }
         
         # Analyze impact for each changed symbol
         traversal_engine = ImpactTraversalEngine(call_graph, import_graph)
@@ -114,7 +220,10 @@ async def analyze_diff_impact(request: DiffAnalysisRequest) -> Dict[str, Any]:
             impact_results.append(impact_result.to_dict())
         
         # Aggregate results
-        total_callers = sum(r["direct_callers"] + r["transitive_callers"] for r in impact_results)
+        total_callers = sum(
+            r["direct_callers"] + r["transitive_callers"] 
+            for r in impact_results
+        )
         total_files = len(set(
             file for r in impact_results for file in r["affected_files"]
         ))
@@ -147,12 +256,17 @@ async def analyze_diff_impact(request: DiffAnalysisRequest) -> Dict[str, Any]:
             "repository_stats": call_graph.get_statistics()
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return create_error_response(e, error_type="diff_analysis_error")
 
 
 @router.post("/repository-overview")
-async def get_repository_overview(request: RepositoryOverviewRequest) -> Dict[str, Any]:
+async def get_repository_overview(
+    request: RepositoryOverviewRequest,
+    background_tasks: BackgroundTasks = None
+) -> Dict[str, Any]:
     """
     Get an overview of a repository's structure and complexity.
     
@@ -165,7 +279,21 @@ async def get_repository_overview(request: RepositoryOverviewRequest) -> Dict[st
     try:
         # Parse the repository
         parser = RepositoryParser()
-        repository_data = parser.parse_repository(request.repository_path)
+        
+        try:
+            repository_data = parser.parse_repository_with_cleanup(request.repository_path)
+        except InvalidRepositoryError as e:
+            return create_error_response(
+                e,
+                error_type="invalid_repository",
+                status_code=400
+            )
+        except CloneError as e:
+            return create_error_response(
+                e,
+                error_type="clone_error",
+                status_code=400
+            )
         
         # Build graphs
         call_graph_builder = CallGraphBuilder()
@@ -207,8 +335,10 @@ async def get_repository_overview(request: RepositoryOverviewRequest) -> Dict[st
         
         return {
             "success": True,
-            "repository": repo["repository"],
-            "total_files": repo["total_files"],
+            "repository": repo.get("repository", "Unknown"),
+            "repository_path": repo.get("repository_path", request.repository_path),
+            "is_temporary": repo.get("is_temporary", False),
+            "total_files": repo.get("total_files", 0),
             "language_breakdown": language_counts,
             "symbol_counts": {
                 "functions": total_functions,
@@ -221,12 +351,17 @@ async def get_repository_overview(request: RepositoryOverviewRequest) -> Dict[st
             "critical_services": critical_services[:10]  # Top 10
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return create_error_response(e, error_type="overview_error")
 
 
 @router.post("/generate-pr-comment")
-async def generate_pr_comment(request: DiffAnalysisRequest) -> Dict[str, Any]:
+async def generate_pr_comment(
+    request: DiffAnalysisRequest,
+    background_tasks: BackgroundTasks = None
+) -> Dict[str, Any]:
     """
     Generate a ready-to-paste GitHub PR review comment.
     
@@ -235,10 +370,14 @@ async def generate_pr_comment(request: DiffAnalysisRequest) -> Dict[str, Any]:
     """
     try:
         # First, get the diff analysis
-        diff_result = await analyze_diff_impact(request)
+        diff_result = await analyze_diff_impact(request, background_tasks)
         
-        if not diff_result["success"]:
-            return {"success": False, "error": "Failed to analyze diff"}
+        if not diff_result.get("success", False):
+            return {
+                "success": False,
+                "error": "Failed to analyze diff",
+                "error_type": diff_result.get("error_type", "unknown")
+            }
         
         summary = diff_result["summary"]
         results = diff_result["results"]
@@ -247,17 +386,17 @@ async def generate_pr_comment(request: DiffAnalysisRequest) -> Dict[str, Any]:
         comment_lines = []
         
         # Header
-        comment_lines.append("## 🚨 Blast Radius Analysis")
+        comment_lines.append("## \ud83d\udea8 Blast Radius Analysis")
         comment_lines.append("")
         
         # Overall risk
         risk_emoji = {
-            "critical": "🔴",
-            "high": "🟠",
-            "medium": "🟡",
-            "low": "🟢"
+            "critical": "\ud83d\udd34",
+            "high": "\ud83d\udfe0",
+            "medium": "\ud83d\udfe1",
+            "low": "\ud83d\udfe2"
         }
-        risk_emoji_str = risk_emoji.get(summary["overall_risk"], "⚪")
+        risk_emoji_str = risk_emoji.get(summary["overall_risk"], "\u26aa")
         
         comment_lines.append(f"**Risk: {risk_emoji_str} {summary['overall_risk'].upper()}**  ")
         comment_lines.append(f"**Confidence: {int(summary['average_confidence'] * 100)}%**")
@@ -274,11 +413,11 @@ async def generate_pr_comment(request: DiffAnalysisRequest) -> Dict[str, Any]:
             comment_lines.append("### Changed Symbols:")
             for symbol in summary["changed_symbols"][:5]:  # Limit to first 5
                 change_type_emoji = {
-                    "added": "✅",
-                    "modified": "🔄",
-                    "deleted": "❌"
+                    "added": "\u2705",
+                    "modified": "\ud83d\udd04",
+                    "deleted": "\u274c"
                 }
-                emoji = change_type_emoji.get(symbol["change_type"], "📝")
+                emoji = change_type_emoji.get(symbol["change_type"], "\ud83d\udcdd")
                 comment_lines.append(f"- {emoji} `{symbol['name']}` ({symbol['type']}) in `{symbol['file']}`")
             comment_lines.append("")
         
@@ -286,25 +425,25 @@ async def generate_pr_comment(request: DiffAnalysisRequest) -> Dict[str, Any]:
         if results:
             comment_lines.append("### Impact Details:")
             for i, result in enumerate(results[:3]):  # Limit to first 3
-                risk_emoji_str = risk_emoji.get(result["risk_level"], "⚪")
-                comment_lines.append(f"")
-                comment_lines.append(f"**{i+1}. `{result['changed_symbol']}`** {risk_emoji_str}")
+                risk_emoji_str = risk_emoji.get(result["risk_level"], "\u26aa")
+                comment_lines.append(f"\n**{i+1}. `{result['changed_symbol']}`** {risk_emoji_str}")
                 comment_lines.append(f"   - Direct callers: {result['direct_callers']}")
                 comment_lines.append(f"   - Transitive callers: {result['transitive_callers']}")
                 comment_lines.append(f"   - Risk score: {result['risk_score']:.1f}")
+                comment_lines.append(f"   - Files affected: {', '.join(result['affected_files'][:3])}")
             comment_lines.append("")
         
         # Suggested actions
         comment_lines.append("### Suggested Actions:")
         if summary["overall_risk"] in ["critical", "high"]:
-            comment_lines.append("- 🛑 **DO NOT MERGE** without addressing the high-risk changes")
+            comment_lines.append("- \ud83d\uded1 **DO NOT MERGE** without addressing the high-risk changes")
             comment_lines.append("- Add comprehensive tests for affected functionality")
             comment_lines.append("- Consider breaking this into smaller, safer PRs")
         elif summary["overall_risk"] == "medium":
-            comment_lines.append("- 👀 Please review the affected files carefully")
+            comment_lines.append("- \ud83d\udc40 Please review the affected files carefully")
             comment_lines.append("- Ensure all callers are updated appropriately")
         else:
-            comment_lines.append("- ✅ Low risk change, but please verify the changes work as expected")
+            comment_lines.append("- \u2705 Low risk change, but please verify the changes work as expected")
         
         comment_lines.append("")
         comment_lines.append("---")
@@ -315,5 +454,25 @@ async def generate_pr_comment(request: DiffAnalysisRequest) -> Dict[str, Any]:
             "comment": "\n".join(comment_lines)
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return create_error_response(e, error_type="pr_comment_error")
+
+
+@router.get("/health")
+async def health_check() -> Dict[str, Any]:
+    """
+    Health check endpoint for the blast radius API.
+    """
+    return {
+        "status": "healthy",
+        "service": "Blast Radius API",
+        "version": "1.0.0",
+        "endpoints": [
+            {"method": "POST", "path": "/api/blast-radius/analyze", "description": "Analyze symbol impact"},
+            {"method": "POST", "path": "/api/blast-radius/analyze-diff", "description": "Analyze diff impact"},
+            {"method": "POST", "path": "/api/blast-radius/repository-overview", "description": "Get repository overview"},
+            {"method": "POST", "path": "/api/blast-radius/generate-pr-comment", "description": "Generate PR comment"},
+        ]
+    }
