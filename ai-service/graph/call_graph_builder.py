@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 from pathlib import Path
 import uuid
@@ -10,6 +11,8 @@ import uuid
 from .graph import Graph
 from .node import Node, NodeType
 from .edge import Edge, EdgeType
+
+logger = logging.getLogger(__name__)
 
 
 class CallGraphBuilder:
@@ -48,14 +51,20 @@ class CallGraphBuilder:
         self.class_names = {}
         self.imported_symbols = {}
         
+        logger.info(f"Building call graph for repository with {len(repository_data.get('files', []))} files")
+        
         # First pass: Create nodes for all functions, classes, and methods
         self._create_symbol_nodes(repository_data)
+        
+        logger.info(f"Created {len(self.graph.nodes)} symbol nodes")
         
         # Second pass: Build import mapping
         self._build_import_mapping(repository_data)
         
         # Third pass: Create call edges by analyzing function bodies
         self._create_call_edges(repository_data)
+        
+        logger.info(f"Created {len(self.graph.edges)} call edges")
         
         # Fourth pass: Create inheritance edges
         self._create_inheritance_edges(repository_data)
@@ -90,6 +99,9 @@ class CallGraphBuilder:
                     func["name"], 
                     NodeType.FUNCTION
                 )
+                has_body = bool(func.get("body", ""))
+                logger.debug(f"  Function node '{func['name']}': has_body={has_body}, body_len={len(func.get('body', ''))}")
+                
                 node = Node(
                     id=node_id,
                     name=func["name"],
@@ -166,6 +178,8 @@ class CallGraphBuilder:
     
     def _create_call_edges(self, repository_data: dict[str, Any]) -> None:
         """Create edges for function/method calls using AST-based extraction."""
+        logger.info("Creating call edges...")
+        
         for file_data in repository_data.get("files", []):
             file_path = file_data["path"]
             language = file_data["language"]
@@ -173,10 +187,15 @@ class CallGraphBuilder:
             # Get source code for this file
             source = self.source_cache.get(file_path, "")
             if not source:
+                logger.warning(f"  No source cached for {file_path}")
                 continue
             
             # Extract calls using AST-based approach
             calls = self._extract_calls_from_source(source, file_path, language, file_data)
+            
+            logger.info(f"  File {file_path}: extracted {len(calls)} calls")
+            if len(calls) > 0:
+                logger.debug(f"    Sample calls: {calls[:3]}")
             
             for call in calls:
                 caller_name = call.get("caller", "")
@@ -236,6 +255,8 @@ class CallGraphBuilder:
                         "callee": callee,
                         "line": line
                     })
+            else:
+                logger.debug(f"    Function '{func_name}' has no body")
         
         # Extract calls from class methods
         for cls in file_data.get("classes", []):
@@ -255,16 +276,8 @@ class CallGraphBuilder:
                             "callee": callee,
                             "line": line
                         })
-        
-        # Also extract top-level calls (not inside functions)
-        # This catches calls in module scope
-        if not calls:
-            # Fallback: extract all calls from source
-            called_functions = self._extract_called_functions_from_body(
-                source, language, 1
-            )
-            # These are top-level calls, we don't know the caller
-            # So we'll skip them for now
+                else:
+                    logger.debug(f"    Method '{class_name}.{method_name}' has no body")
         
         return calls
     
@@ -320,7 +333,8 @@ class CallGraphBuilder:
                             # Filter out common false positives
                             if group not in ['if', 'for', 'while', 'with', 'try', 'catch', 'finally', 
                                             'return', 'break', 'continue', 'import', 'from', 'as',
-                                            'def', 'class', 'function', 'const', 'let', 'var']:
+                                            'def', 'class', 'function', 'const', 'let', 'var', 'export',
+                                            'default', 'new', 'delete', 'typeof', 'instanceof', 'void']:
                                 called_functions.append((group, line_num))
         
         # Remove duplicates while preserving order

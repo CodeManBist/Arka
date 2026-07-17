@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Set
 import re
 from pathlib import Path
@@ -9,6 +10,8 @@ from pathlib import Path
 from .graph import Graph
 from .node import Node, NodeType
 from .edge import Edge, EdgeType
+
+logger = logging.getLogger(__name__)
 
 
 class ImportGraphBuilder:
@@ -40,8 +43,12 @@ class ImportGraphBuilder:
         # First pass: Create file nodes
         self._create_file_nodes(repository_data)
         
+        logger.info(f"Created {len(self.graph.nodes)} file nodes")
+        
         # Second pass: Create import edges
         self._create_import_edges(repository_data)
+        
+        logger.info(f"Created {len(self.graph.edges)} import edges")
         
         # Compute graph metrics
         self._compute_graph_metrics()
@@ -88,6 +95,8 @@ class ImportGraphBuilder:
                 "exports": [e.get("name", "") for e in file_data.get("exports", [])],
             }
         
+        logger.debug(f"File info: {len(file_info)} files indexed")
+        
         # Create edges based on imports
         for file_data in repository_data.get("files", []):
             file_path = file_data["path"]
@@ -106,7 +115,7 @@ class ImportGraphBuilder:
                     import_path, file_path, file_info
                 )
                 
-                if imported_file_path and imported_file_path in file_info:
+                if imported_file_path:
                     imported_node_id = self._generate_file_node_id(imported_file_path)
                     
                     # Only create edge if both nodes exist
@@ -126,6 +135,11 @@ class ImportGraphBuilder:
                             }
                         )
                         self.graph.add_edge(edge)
+                        logger.debug(f"  Created import edge: {file_path} -> {imported_file_path}")
+                    else:
+                        logger.debug(f"  Target node not found: {imported_node_id}")
+                else:
+                    logger.debug(f"  Could not resolve import: {import_path} from {file_path}")
     
     def _resolve_import_path(
         self,
@@ -144,6 +158,8 @@ class ImportGraphBuilder:
         if not import_path:
             return None
         
+        logger.debug(f"  Resolving import: {import_path} from {caller_file_path}")
+        
         # Case 1: Relative import (starts with .)
         if import_path.startswith("."):
             caller_dir = Path(caller_file_path).parent
@@ -161,11 +177,13 @@ class ImportGraphBuilder:
             for ext in ["", ".js", ".ts", ".jsx", ".tsx", ".py"]:
                 test_path = str(candidate_path) + ext
                 if test_path in file_info:
+                    logger.debug(f"    Resolved relative import to: {test_path}")
                     return test_path
                 
                 # Also try with index files
                 test_index_path = str(Path(test_path).parent / "index" + ext)
                 if test_index_path in file_info:
+                    logger.debug(f"    Resolved relative import to index: {test_index_path}")
                     return test_index_path
             
             # Try without the first part of the path
@@ -175,6 +193,7 @@ class ImportGraphBuilder:
                 for ext in ["", ".js", ".ts", ".jsx", ".tsx", ".py"]:
                     test_path = str(caller_dir / partial_path) + ext
                     if test_path in file_info:
+                        logger.debug(f"    Resolved relative import (partial) to: {test_path}")
                         return test_path
         
         # Case 2: Absolute import (no leading ., no /)
@@ -188,25 +207,30 @@ class ImportGraphBuilder:
                 
                 # Direct match
                 if file_stem == import_stem or file_stem == import_path:
+                    logger.debug(f"    Resolved module import to: {file_path}")
                     return file_path
                 
                 # Match with extension
                 if Path(file_path).name == import_path:
+                    logger.debug(f"    Resolved module import (by name) to: {file_path}")
                     return file_path
                 
                 # Check if this file exports the imported name
                 if import_path in info.get("exports", []):
+                    logger.debug(f"    Resolved module import (by export) to: {file_path}")
                     return file_path
             
             # Try to find index files
             for ext in [".js", ".ts", ".jsx", ".tsx", ".py"]:
                 index_path = f"{import_path}/index{ext}"
                 if index_path in file_info:
+                    logger.debug(f"    Resolved module import to index: {index_path}")
                     return index_path
                 
                 # Also try without leading /
                 index_path = f"{import_path.replace('/', Path.sep)}index{ext}"
                 if index_path in file_info:
+                    logger.debug(f"    Resolved module import to index (normalized): {index_path}")
                     return index_path
         
         # Case 3: Path import (starts with / or contains /)
@@ -214,14 +238,17 @@ class ImportGraphBuilder:
             # Try to find the file directly
             for file_path in file_info:
                 if import_path in file_path or file_path.endswith(import_path):
+                    logger.debug(f"    Resolved path import to: {file_path}")
                     return file_path
             
             # Try with extensions
             for ext in [".js", ".ts", ".jsx", ".tsx", ".py"]:
                 test_path = import_path + ext
                 if test_path in file_info:
+                    logger.debug(f"    Resolved path import with extension to: {test_path}")
                     return test_path
         
+        logger.debug(f"    Could not resolve import: {import_path}")
         return None
     
     def _file_matches_import(self, file_path: str, import_path: str) -> bool:
