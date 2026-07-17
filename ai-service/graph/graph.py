@@ -338,8 +338,8 @@ class Graph:
                 node.language for node in self.nodes.values()
             )),
             "node_types": {
-                node_type.value: count 
-                for node_type, count in self.type_to_nodes.items()
+                node_type: len(node_ids)
+                for node_type, node_ids in self.type_to_nodes.items()
             },
             "edge_types": {
                 edge_type.value: sum(
