@@ -2,26 +2,20 @@
 
 FUNCTION_QUERY = """
 (function_declaration
-  name: (identifier) @function.name
-  body: (statement_block) @function.body) @function.def
+  name: (identifier) @function.name) @function.def
 
 (method_definition
-  name: (property_identifier) @function.name
-  body: (statement_block) @function.body) @function.def
+  name: (property_identifier) @function.name) @function.def
 
-(arrow_function
-  parameters: (formal_parameters) @function.params
-  body: (_) @function.body) @function.def
+(arrow_function) @function.def
 
 (function_expression
-  name: (identifier) @function.name
-  body: (statement_block) @function.body) @function.def
+  name: (identifier) @function.name) @function.def
 """
 
 CLASS_QUERY = """
 (class_declaration
-  name: (identifier) @class.name
-  body: (class_body) @class.body) @class.def
+  name: (identifier) @class.name) @class.def
 """
 
 IMPORT_QUERY = """
@@ -55,8 +49,4 @@ VARIABLE_QUERY = """
 
 (assignment_expression
   left: (identifier) @variable.name) @variable.def
-
-(assignment_expression
-  left: (member_expression
-    property: (property_identifier) @variable.name) @variable.def)
 """
