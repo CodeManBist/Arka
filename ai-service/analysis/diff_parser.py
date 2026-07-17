@@ -13,7 +13,7 @@ class ChangedSymbol:
     """Represents a symbol that was changed in a diff."""
     
     name: str
-    symbol_type: str  # 'function', 'class', 'method', 'variable', etc.
+    symbol_type: str  # 'function', 'class', 'method', 'variable', 'constant', 'export'
     file_path: str
     change_type: str  # 'added', 'modified', 'deleted'
     start_line: Optional[int] = None
@@ -42,6 +42,8 @@ class DiffParser:
     This parser can detect:
     - Added, modified, and deleted functions
     - Added, modified, and deleted classes
+    - Added, modified, and deleted variables
+    - Added, modified, and deleted exports
     - Changed function signatures (parameters, return types)
     - Added/removed imports
     """
@@ -64,10 +66,26 @@ class DiffParser:
             r'(class\s+)([a-zA-Z_][a-zA-Z0-9_]*)',
         ]
         
+        self.variable_patterns = [
+            # Python: variable = value
+            r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*.+',
+            # JavaScript/TypeScript: const/let/var variable = value
+            r'(const|let|var)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[=;]',
+            # Export const variable = value
+            r'export\s+(const|let|var)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[=;]',
+            # Default export
+            r'export\s+default\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+        ]
+        
         self.import_patterns = [
             r'(import\s+.*?\s+from\s+["\'])',
             r'(import\s+["\'].*?["\'])',
             r'(require\s*\(\s*["\'].*?["\']\s*\))',
+        ]
+        
+        self.export_patterns = [
+            r'export\s+(function|class|const|let|var|default)',
+            r'export\s+\{.*?\}',
         ]
     
     def parse_diff(self, diff: str) -> List[ChangedSymbol]:
@@ -183,6 +201,16 @@ class DiffParser:
         
         # Detect class changes
         symbols.extend(self._extract_class_changes(
+            file_path, all_old, all_new, change_type
+        ))
+        
+        # Detect variable changes
+        symbols.extend(self._extract_variable_changes(
+            file_path, all_old, all_new, change_type
+        ))
+        
+        # Detect export changes
+        symbols.extend(self._extract_export_changes(
             file_path, all_old, all_new, change_type
         ))
         
@@ -388,6 +416,208 @@ class DiffParser:
                         break
         
         return classes
+    
+    def _extract_variable_changes(
+        self,
+        file_path: str,
+        old_content: str,
+        new_content: str,
+        change_type: str
+    ) -> List[ChangedSymbol]:
+        """Extract variable changes from content."""
+        symbols: List[ChangedSymbol] = []
+        
+        # Find all variables in old and new content
+        old_variables = self._find_variables(old_content)
+        new_variables = self._find_variables(new_content)
+        
+        # Detect added variables
+        old_var_names = {v['name'] for v in old_variables}
+        new_var_names = {v['name'] for v in new_variables}
+        
+        added_vars = new_var_names - old_var_names
+        deleted_vars = old_var_names - new_var_names
+        common_vars = old_var_names & new_var_names
+        
+        # Added variables
+        for var in new_variables:
+            if var['name'] in added_vars:
+                symbols.append(ChangedSymbol(
+                    name=var['name'],
+                    symbol_type='variable',
+                    file_path=file_path,
+                    change_type='added',
+                    start_line=var.get('start_line'),
+                    new_signature=var.get('signature')
+                ))
+        
+        # Deleted variables
+        for var in old_variables:
+            if var['name'] in deleted_vars:
+                symbols.append(ChangedSymbol(
+                    name=var['name'],
+                    symbol_type='variable',
+                    file_path=file_path,
+                    change_type='deleted',
+                    start_line=var.get('start_line'),
+                    old_signature=var.get('signature')
+                ))
+        
+        # Modified variables
+        for var_name in common_vars:
+            old_var = next((v for v in old_variables if v['name'] == var_name), None)
+            new_var = next((v for v in new_variables if v['name'] == var_name), None)
+            
+            if old_var and new_var:
+                old_sig = old_var.get('signature', '')
+                new_sig = new_var.get('signature', '')
+                
+                if old_sig != new_sig:
+                    symbols.append(ChangedSymbol(
+                        name=var_name,
+                        symbol_type='variable',
+                        file_path=file_path,
+                        change_type='modified',
+                        start_line=new_var.get('start_line'),
+                        old_signature=old_sig,
+                        new_signature=new_sig
+                    ))
+        
+        return symbols
+    
+    def _find_variables(self, content: str) -> List[Dict[str, Any]]:
+        """Find all variable definitions in content."""
+        variables = []
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            for pattern in self.variable_patterns:
+                match = re.search(pattern, line)
+                if match:
+                    # Handle different pattern types
+                    groups = match.groups()
+                    
+                    # Skip if it's a function definition (def, function, etc.)
+                    if any(kw in line for kw in ['def ', 'function ', 'class ']):
+                        continue
+                    
+                    # Extract variable name
+                    var_name = None
+                    for group in groups:
+                        if group and group not in ['const', 'let', 'var', 'export', 'default']:
+                            var_name = group
+                            break
+                    
+                    if var_name and var_name != '_':
+                        # Extract signature
+                        signature = line.strip()
+                        
+                        variables.append({
+                            'name': var_name,
+                            'signature': signature,
+                            'start_line': i + 1
+                        })
+                        break
+        
+        return variables
+    
+    def _extract_export_changes(
+        self,
+        file_path: str,
+        old_content: str,
+        new_content: str,
+        change_type: str
+    ) -> List[ChangedSymbol]:
+        """Extract export changes from content."""
+        symbols: List[ChangedSymbol] = []
+        
+        # Find all exports in old and new content
+        old_exports = self._find_exports(old_content)
+        new_exports = self._find_exports(new_content)
+        
+        # Detect added exports
+        old_export_names = {e['name'] for e in old_exports}
+        new_export_names = {e['name'] for e in new_exports}
+        
+        added_exports = new_export_names - old_export_names
+        deleted_exports = old_export_names - new_export_names
+        
+        # Added exports
+        for exp in new_exports:
+            if exp['name'] in added_exports:
+                symbols.append(ChangedSymbol(
+                    name=exp['name'],
+                    symbol_type='export',
+                    file_path=file_path,
+                    change_type='added',
+                    start_line=exp.get('start_line'),
+                    new_signature=exp.get('signature')
+                ))
+        
+        # Deleted exports
+        for exp in old_exports:
+            if exp['name'] in deleted_exports:
+                symbols.append(ChangedSymbol(
+                    name=exp['name'],
+                    symbol_type='export',
+                    file_path=file_path,
+                    change_type='deleted',
+                    start_line=exp.get('start_line'),
+                    old_signature=exp.get('signature')
+                ))
+        
+        return symbols
+    
+    def _find_exports(self, content: str) -> List[Dict[str, Any]]:
+        """Find all exports in content."""
+        exports = []
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            for pattern in self.export_patterns:
+                match = re.search(pattern, line)
+                if match:
+                    # Extract export name
+                    export_name = None
+                    
+                    # Try to extract from named exports: export { name }
+                    named_match = re.search(r'export\s+\{([^}]+)\}', line)
+                    if named_match:
+                        named_exports = named_match.group(1).split(',')
+                        for name in named_exports:
+                            name = name.strip()
+                            if name:
+                                exports.append({
+                                    'name': name,
+                                    'signature': line.strip(),
+                                    'start_line': i + 1
+                                })
+                        continue
+                    
+                    # Try to extract from export function/class
+                    func_match = re.search(r'export\s+(function|class)\s+([a-zA-Z_][a-zA-Z0-9_]*)', line)
+                    if func_match:
+                        export_name = func_match.group(2)
+                    else:
+                        # Try default export
+                        default_match = re.search(r'export\s+default\s+([a-zA-Z_][a-zA-Z0-9_]*)', line)
+                        if default_match:
+                            export_name = default_match.group(1)
+                        else:
+                            # Try export const/let/var
+                            var_match = re.search(r'export\s+(const|let|var)\s+([a-zA-Z_][a-zA-Z0-9_]*)', line)
+                            if var_match:
+                                export_name = var_match.group(2)
+                    
+                    if export_name:
+                        exports.append({
+                            'name': export_name,
+                            'signature': line.strip(),
+                            'start_line': i + 1
+                        })
+                    break
+        
+        return exports
     
     def _extract_import_changes(
         self,

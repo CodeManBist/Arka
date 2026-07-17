@@ -15,6 +15,7 @@ class FunctionExtractor(BaseQueryExtractor):
 
     NAME_CAPTURE = "function.name"
     DEFINITION_CAPTURE = "function.def"
+    BODY_CAPTURE = "function.body"
 
     def extract(
         self,
@@ -35,7 +36,7 @@ class FunctionExtractor(BaseQueryExtractor):
             query_string: Optional pre-loaded query string.
 
         Returns:
-            List of function symbols with name and line range.
+            List of function symbols with name, line range, and body.
         """
         if query_string is None:
             if language_name is None:

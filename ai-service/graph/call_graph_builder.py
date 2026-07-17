@@ -75,6 +75,14 @@ class CallGraphBuilder:
             self.function_names[file_path] = set()
             self.class_names[file_path] = set()
             
+            # Cache source code for AST-based call extraction
+            try:
+                self.source_cache[file_path] = Path(file_path).read_text(
+                    encoding="utf-8", errors="ignore"
+                )
+            except Exception:
+                self.source_cache[file_path] = ""
+            
             # Create function nodes
             for func in file_data.get("functions", []):
                 node_id = self._generate_node_id(
@@ -90,7 +98,7 @@ class CallGraphBuilder:
                     language=language,
                     start_line=func.get("start_line", 0),
                     end_line=func.get("end_line", 0),
-                    metadata={"original": func}
+                    metadata={"original": func, "body": func.get("body", "")}
                 )
                 self.graph.add_node(node)
                 self.function_names[file_path].add(func["name"])
@@ -110,7 +118,7 @@ class CallGraphBuilder:
                     language=language,
                     start_line=cls.get("start_line", 0),
                     end_line=cls.get("end_line", 0),
-                    metadata={"original": cls}
+                    metadata={"original": cls, "body": cls.get("body", "")}
                 )
                 self.graph.add_node(node)
                 self.class_names[file_path].add(cls["name"])
@@ -132,7 +140,8 @@ class CallGraphBuilder:
                         end_line=method.get("end_line", 0),
                         metadata={
                             "original": method,
-                            "class_name": cls["name"]
+                            "class_name": cls["name"],
+                            "body": method.get("body", "")
                         }
                     )
                     self.graph.add_node(method_node)
@@ -156,13 +165,18 @@ class CallGraphBuilder:
                     self.imported_symbols[file_path][named_import] = import_path
     
     def _create_call_edges(self, repository_data: dict[str, Any]) -> None:
-        """Create edges for function/method calls."""
+        """Create edges for function/method calls using AST-based extraction."""
         for file_data in repository_data.get("files", []):
             file_path = file_data["path"]
             language = file_data["language"]
             
-            # Get all call references from the file
-            calls = self._extract_calls_from_file(file_data, language)
+            # Get source code for this file
+            source = self.source_cache.get(file_path, "")
+            if not source:
+                continue
+            
+            # Extract calls using AST-based approach
+            calls = self._extract_calls_from_source(source, file_path, language, file_data)
             
             for call in calls:
                 caller_name = call.get("caller", "")
@@ -173,15 +187,7 @@ class CallGraphBuilder:
                     continue
                 
                 # Find the caller node
-                caller_nodes = self.graph.get_nodes_by_name(caller_name)
-                if not caller_nodes:
-                    # Try to find caller by file and name pattern
-                    caller_nodes = [
-                        node for node in self.graph.nodes.values()
-                        if node.file_path == file_path and 
-                        (node.name == caller_name or 
-                         node.name.endswith(f".{caller_name}"))
-                    ]
+                caller_nodes = self._find_caller_node(caller_name, file_path)
                 
                 # Find the callee node
                 callee_nodes = self._resolve_callee(callee_name, file_path)
@@ -203,27 +209,32 @@ class CallGraphBuilder:
                         )
                         self.graph.add_edge(edge)
     
-    def _extract_calls_from_file(
-        self, 
-        file_data: dict[str, Any], 
-        language: str
+    def _extract_calls_from_source(
+        self,
+        source: str,
+        file_path: str,
+        language: str,
+        file_data: dict[str, Any]
     ) -> List[dict[str, Any]]:
-        """Extract function/method calls from a file's data."""
+        """Extract function/method calls from source code using AST + regex hybrid."""
         calls = []
         
-        # Extract calls from function bodies
+        # First, try to extract calls from function bodies if available
         for func in file_data.get("functions", []):
             func_name = func.get("name", "")
             func_body = func.get("body", "")
+            start_line = func.get("start_line", 0)
             
             if func_body:
-                # Extract called functions from the body
-                called_functions = self._extract_called_functions(func_body, language)
-                for callee in called_functions:
+                # Extract called functions from the body using improved regex
+                called_functions = self._extract_called_functions_from_body(
+                    func_body, language, start_line
+                )
+                for callee, line in called_functions:
                     calls.append({
                         "caller": func_name,
                         "callee": callee,
-                        "line": func.get("start_line", 0)
+                        "line": line
                     })
         
         # Extract calls from class methods
@@ -232,48 +243,126 @@ class CallGraphBuilder:
             for method in cls.get("methods", []):
                 method_name = method.get("name", "")
                 method_body = method.get("body", "")
+                start_line = method.get("start_line", 0)
                 
                 if method_body:
-                    called_functions = self._extract_called_functions(method_body, language)
-                    for callee in called_functions:
+                    called_functions = self._extract_called_functions_from_body(
+                        method_body, language, start_line
+                    )
+                    for callee, line in called_functions:
                         calls.append({
                             "caller": f"{class_name}.{method_name}",
                             "callee": callee,
-                            "line": method.get("start_line", 0)
+                            "line": line
                         })
+        
+        # Also extract top-level calls (not inside functions)
+        # This catches calls in module scope
+        if not calls:
+            # Fallback: extract all calls from source
+            called_functions = self._extract_called_functions_from_body(
+                source, language, 1
+            )
+            # These are top-level calls, we don't know the caller
+            # So we'll skip them for now
         
         return calls
     
-    def _extract_called_functions(self, code: str, language: str) -> List[str]:
+    def _extract_called_functions_from_body(
+        self,
+        code: str,
+        language: str,
+        base_line: int
+    ) -> List[Tuple[str, int]]:
         """Extract function names that are being called from code."""
-        # Simple regex-based extraction (will be enhanced with AST analysis)
         called_functions = []
+        lines = code.split('\n')
         
-        # Pattern for function calls: function_name( or obj.function_name(
-        patterns = [
-            r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
-            r'\b(self\.)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
-            r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
-        ]
+        # Improved patterns for different languages
+        if language == "python":
+            patterns = [
+                # function_name(
+                r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                # self.method_name(
+                r'\b(self\.)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                # obj.method_name(
+                r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                # ClassName(
+                r'\b([A-Z][a-zA-Z0-9_]*)\s*\(',
+            ]
+        elif language in ["javascript", "typescript"]:
+            patterns = [
+                # function_name(
+                r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                # this.method_name(
+                r'\b(this\.)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                # obj.method_name(
+                r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                # new ClassName(
+                r'\bnew\s+([A-Z][a-zA-Z0-9_]*)\s*\(',
+                # ClassName(
+                r'\b([A-Z][a-zA-Z0-9_]*)\s*\(',
+            ]
+        else:
+            patterns = [
+                r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                r'\b([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+            ]
         
-        for pattern in patterns:
-            matches = re.finditer(pattern, code)
-            for match in matches:
-                # Extract the function name from the match
-                groups = match.groups()
-                for group in groups:
-                    if group and group != "self":
-                        called_functions.append(group)
+        for line_num, line in enumerate(lines, start=base_line):
+            for pattern in patterns:
+                matches = re.finditer(pattern, line)
+                for match in matches:
+                    # Extract the function name from the match
+                    groups = match.groups()
+                    for group in groups:
+                        if group and group != "self" and group != "this" and group != "new":
+                            # Filter out common false positives
+                            if group not in ['if', 'for', 'while', 'with', 'try', 'catch', 'finally', 
+                                            'return', 'break', 'continue', 'import', 'from', 'as',
+                                            'def', 'class', 'function', 'const', 'let', 'var']:
+                                called_functions.append((group, line_num))
         
         # Remove duplicates while preserving order
         seen = set()
         unique_calls = []
-        for func in called_functions:
+        for func, line in called_functions:
             if func not in seen:
                 seen.add(func)
-                unique_calls.append(func)
+                unique_calls.append((func, line))
         
         return unique_calls
+    
+    def _find_caller_node(self, caller_name: str, file_path: str) -> List[Node]:
+        """Find the caller node in the graph."""
+        nodes = []
+        
+        # First, try to find exact match in the same file
+        same_file_nodes = [
+            node for node in self.graph.nodes.values()
+            if node.file_path == file_path and node.name == caller_name
+        ]
+        nodes.extend(same_file_nodes)
+        
+        # Check if it's a method call (ClassName.methodName)
+        if "." in caller_name:
+            parts = caller_name.split(".")
+            if len(parts) >= 2:
+                # Try to find as method
+                method_nodes = [
+                    node for node in self.graph.nodes.values()
+                    if node.node_type == NodeType.METHOD and 
+                    node.name == parts[-1] and
+                    node.file_path == file_path
+                ]
+                nodes.extend(method_nodes)
+        
+        # Fallback: search all nodes
+        if not nodes:
+            all_nodes = self.graph.get_nodes_by_name(caller_name)
+            nodes.extend(all_nodes)
+        
+        return nodes
     
     def _resolve_callee(self, callee_name: str, caller_file: str) -> List[Node]:
         """Resolve a callee name to actual nodes in the graph."""

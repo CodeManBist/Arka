@@ -12,6 +12,7 @@ class BaseQueryExtractor:
 
     NAME_CAPTURE = ""
     DEFINITION_CAPTURE = ""
+    BODY_CAPTURE = ""
 
     def extract(
         self,
@@ -44,17 +45,30 @@ class BaseQueryExtractor:
             start_line = range_node.start_point[0] + 1
             end_line = range_node.end_point[0] + 1
 
+            # Extract body if available
+            body = ""
+            body_nodes = captures.get(self.BODY_CAPTURE, [])
+            if body_nodes:
+                body_node = body_nodes[0]
+                body_start = body_node.start_byte
+                body_end = body_node.end_byte
+                body = source_bytes[body_start:body_end].decode("utf-8", errors="ignore")
+
             key = (name, start_line)
             if key in seen:
                 continue
             seen.add(key)
 
-            symbols.append(
-                {
-                    "name": name,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                }
-            )
+            symbol_dict = {
+                "name": name,
+                "start_line": start_line,
+                "end_line": end_line,
+            }
+            
+            # Add body if extracted
+            if body:
+                symbol_dict["body"] = body
+            
+            symbols.append(symbol_dict)
 
         return symbols
