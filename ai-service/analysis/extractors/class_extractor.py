@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from tree_sitter import Language, Query, QueryCursor, Tree
 
 from analysis.queries.registry import get_class_query
+
+logger = logging.getLogger(__name__)
 
 
 class ClassExtractor:
@@ -51,6 +54,9 @@ class ClassExtractor:
         seen: set[tuple[str, int]] = set()
         source_bytes = source.encode("utf-8")
 
+        logger.debug(f"Extracting classes with query: {query_string}")
+        logger.debug(f"Found {len(matches)} class matches")
+
         for _pattern_index, captures in matches:
             name_nodes = captures.get(self.NAME_CAPTURE, [])
             if not name_nodes:
@@ -67,10 +73,14 @@ class ClassExtractor:
             end_line = range_node.end_point[0] + 1
 
             # Extract body
-            body = self._extract_body(range_node, source_bytes)
+            body = self._extract_body(range_node, source_bytes, name, language_name or "")
+            
+            logger.debug(f"Class '{name}' at line {start_line}: body length = {len(body)}")
 
             # Extract methods from the class body
-            methods = self._extract_methods(range_node, source, language)
+            methods = self._extract_methods(range_node, source, language, language_name or "")
+            
+            logger.debug(f"  Extracted {len(methods)} methods from class '{name}'")
 
             key = (name, start_line)
             if key in seen:
@@ -87,42 +97,53 @@ class ClassExtractor:
                 }
             )
 
+        logger.debug(f"Extracted {len(symbols)} classes")
         return symbols
     
-    def _extract_body(self, node, source_bytes: bytes) -> str:
+    def _extract_body(self, node, source_bytes: bytes, class_name: str = "", language: str = "") -> str:
         """Extract the body of a class from its AST node."""
-        # Look for a block/class_body child
+        # Define body node types for different languages
+        body_node_types = ["block", "class_body", "statement_block"]
+        
+        # Look for a body node child
         for child in node.children:
-            if child.type in ["block", "class_body", "statement_block"]:
+            if child.type in body_node_types:
                 start = child.start_byte
                 end = child.end_byte
-                return source_bytes[start:end].decode("utf-8", errors="ignore")
+                body = source_bytes[start:end].decode("utf-8", errors="ignore")
+                logger.debug(f"  Found {child.type} body for class '{class_name}' ({language}): {len(body)} chars")
+                return body
         
         return ""
     
-    def _extract_methods(self, class_node, source: str, language: Language) -> list[dict[str, Any]]:
+    def _extract_methods(self, class_node, source: str, language: Language, language_name: str) -> list[dict[str, Any]]:
         """Extract methods from a class body."""
         methods = []
+        source_bytes = source.encode("utf-8")
         
-        # Look for method_definition nodes in the class body
+        # Define method node types for different languages
+        method_node_types = ["method_definition", "function_definition"]
+        body_node_types = ["block", "class_body", "statement_block"]
+        
+        # Look for method nodes in the class body
         for child in class_node.children:
-            if child.type == "class_body":
+            if child.type in body_node_types:
                 for method_node in child.children:
-                    if method_node.type == "method_definition":
-                        method = self._extract_method(method_node, source)
+                    if method_node.type in method_node_types:
+                        method = self._extract_method(method_node, source, language_name)
                         if method:
                             methods.append(method)
         
         return methods
     
-    def _extract_method(self, method_node, source: str) -> dict[str, Any]:
+    def _extract_method(self, method_node, source: str, language_name: str) -> dict[str, Any]:
         """Extract a single method from its AST node."""
         source_bytes = source.encode("utf-8")
         
         # Get method name
         name = ""
         for child in method_node.children:
-            if child.type == "property_identifier":
+            if child.type in ["property_identifier", "identifier"]:
                 name = source_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="ignore")
                 break
         
@@ -131,8 +152,10 @@ class ClassExtractor:
         
         # Get body
         body = ""
+        body_node_types = ["block", "statement_block"]
+        
         for child in method_node.children:
-            if child.type in ["block", "statement_block"]:
+            if child.type in body_node_types:
                 body = source_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="ignore")
                 break
         
